@@ -718,21 +718,6 @@ export function MembersPanel() {
                               </Button>
                             )}
                             
-                            {!member.activeMembership && (
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                className="h-7 w-7 p-0 text-emerald-500"
-                                onClick={() => {
-                                  setShowExtendDialog(member)
-                                  setExtendDays(30)
-                                }}
-                                title="Üyelik Ekle"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
-                            
                             <Button 
                               variant="ghost" 
                               size="sm"

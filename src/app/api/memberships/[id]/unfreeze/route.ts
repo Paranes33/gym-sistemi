@@ -6,10 +6,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params
+    const { id: membershipId } = await params
 
+    console.log('Unfreezing membership:', membershipId)
+
+    // Üyeliği bul
     const membership = await db.membership.findUnique({
-      where: { id }
+      where: { id: membershipId },
+      include: {
+        freezes: {
+          where: { isActive: true }
+        }
+      }
     })
 
     if (!membership) {
@@ -17,23 +25,24 @@ export async function POST(
     }
 
     if (membership.status !== 'FROZEN') {
-      return NextResponse.json({ error: 'Üyelik dondurulmuş değil' }, { status: 400 })
+      return NextResponse.json({ error: 'Bu üyelik dondurulmuş değil' }, { status: 400 })
     }
 
-    // Aktif dondurma kayıtlarını kapat
+    // Aktif dondurma dönemlerini kapat
     await db.freezePeriod.updateMany({
       where: {
-        membershipId: id,
+        membershipId: membershipId,
         isActive: true
       },
       data: {
-        isActive: false
+        isActive: false,
+        endDate: new Date()
       }
     })
 
     // Üyeliği aktif yap
     const updated = await db.membership.update({
-      where: { id },
+      where: { id: membershipId },
       data: {
         status: 'ACTIVE'
       },
@@ -45,6 +54,8 @@ export async function POST(
         }
       }
     })
+
+    console.log('Membership unfrozen:', updated.id)
 
     return NextResponse.json(updated)
   } catch (error) {
