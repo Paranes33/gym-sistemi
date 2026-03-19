@@ -6,16 +6,18 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: membershipId } = await params
+    const { id } = await params
 
-    console.log('Unfreezing membership:', membershipId)
+    console.log('Unfreezing membership:', id)
 
     // Üyeliği bul
     const membership = await db.membership.findUnique({
-      where: { id: membershipId },
+      where: { id },
       include: {
         freezes: {
-          where: { isActive: true }
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1
         }
       }
     })
@@ -29,28 +31,28 @@ export async function POST(
     }
 
     // Aktif dondurma dönemlerini kapat
-    await db.freezePeriod.updateMany({
-      where: {
-        membershipId: membershipId,
-        isActive: true
-      },
-      data: {
-        isActive: false,
-        endDate: new Date()
-      }
-    })
+    if (membership.freezes.length > 0) {
+      await db.freezePeriod.updateMany({
+        where: {
+          membershipId: id,
+          isActive: true
+        },
+        data: {
+          isActive: false,
+          endDate: new Date()
+        }
+      })
+    }
 
     // Üyeliği aktif yap
     const updated = await db.membership.update({
-      where: { id: membershipId },
+      where: { id },
       data: {
         status: 'ACTIVE'
       },
       include: {
         member: {
-          include: {
-            user: true
-          }
+          include: { user: true }
         }
       }
     })
@@ -59,9 +61,10 @@ export async function POST(
 
     return NextResponse.json(updated)
   } catch (error) {
-    console.error('Unfreeze membership error:', error)
+    console.error('Unfreeze error:', error)
     return NextResponse.json({ 
-      error: 'Server error: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata') 
+      error: 'Sunucu hatası',
+      details: error instanceof Error ? error.message : 'Bilinmeyen hata'
     }, { status: 500 })
   }
 }
