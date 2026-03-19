@@ -47,7 +47,13 @@ export async function GET(request: NextRequest) {
           select: { id: true, name: true }
         },
         memberships: {
-          where: { status: 'ACTIVE' },
+          where: { 
+            OR: [
+              { status: 'ACTIVE' },
+              { status: 'FROZEN' },
+              { status: 'EXPIRED' }
+            ]
+          },
           orderBy: { endDate: 'desc' },
           take: 1
         },
