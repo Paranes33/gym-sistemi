@@ -73,7 +73,10 @@ export function PaymentsPanel() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const gymId = user?.role === 'SALON_ADMIN' ? gym?.id : undefined
+      // gymId'yi belirle - SALON_ADMIN için gym.id, diğerleri için undefined (tümü)
+      const gymId = (user?.role === 'SALON_ADMIN' && gym?.id) ? gym.id : undefined
+      
+      console.log('Fetching payments with gymId:', gymId, 'user role:', user?.role)
       
       const [paymentsRes, debtsRes, membersRes] = await Promise.all([
         fetch(`/api/payments${gymId ? `?gymId=${gymId}` : ''}`),
@@ -83,7 +86,10 @@ export function PaymentsPanel() {
 
       if (paymentsRes.ok) {
         const data = await paymentsRes.json()
+        console.log('Payments response:', data)
         setPayments(Array.isArray(data) ? data : (data.data || []))
+      } else {
+        console.error('Payments fetch failed:', paymentsRes.status)
       }
       
       if (debtsRes.ok) {
@@ -115,16 +121,19 @@ export function PaymentsPanel() {
 
     setSubmitting(true)
     try {
+      const payload = {
+        memberId: paymentMember,
+        amount: paymentAmount,
+        type: paymentType,
+        description: paymentDescription,
+        gymId: gym?.id
+      }
+      console.log('Creating payment with payload:', payload)
+
       const response = await fetch('/api/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          memberId: paymentMember,
-          amount: paymentAmount,
-          type: paymentType,
-          description: paymentDescription,
-          gymId: gym?.id
-        })
+        body: JSON.stringify(payload)
       })
 
       if (!response.ok) {
@@ -132,11 +141,15 @@ export function PaymentsPanel() {
         throw new Error(error.error || 'Ödeme kaydedilemedi')
       }
 
+      const newPayment = await response.json()
+      console.log('Payment created:', newPayment)
+
       toast.success('Ödeme başarıyla kaydedildi')
       setShowPaymentDialog(false)
       resetPaymentForm()
       fetchData()
     } catch (error) {
+      console.error('Payment error:', error)
       toast.error(error instanceof Error ? error.message : 'Bir hata oluştu')
     } finally {
       setSubmitting(false)

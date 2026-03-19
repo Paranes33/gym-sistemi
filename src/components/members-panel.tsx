@@ -241,24 +241,48 @@ export function MembersPanel() {
     }
   }
 
-  // Üyelik uzatma
+  // Üyelik uzatma veya yeni üyelik ekleme
   const handleExtendMembership = async () => {
-    if (!showExtendDialog?.activeMembership) return
+    if (!showExtendDialog) return
 
     setSubmitting(true)
     try {
-      const response = await fetch(`/api/memberships/${showExtendDialog.activeMembership.id}/extend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: extendDays })
-      })
+      if (showExtendDialog.activeMembership) {
+        // Mevcut üyeliği uzat
+        const response = await fetch(`/api/memberships/${showExtendDialog.activeMembership.id}/extend`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ days: extendDays })
+        })
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Üyelik uzatılamadı')
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Üyelik uzatılamadı')
+        }
+
+        toast.success(`Üyelik ${extendDays} gün uzatıldı`)
+      } else {
+        // Yeni üyelik oluştur
+        const response = await fetch('/api/memberships', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            memberId: showExtendDialog.id,
+            startDate: new Date().toISOString(),
+            durationDays: extendDays,
+            price: 0,
+            paidAmount: 0
+          })
+        })
+
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Üyelik oluşturulamadı')
+        }
+
+        toast.success(`Yeni üyelik ${extendDays} gün olarak oluşturuldu`)
       }
 
-      toast.success(`Üyelik ${extendDays} gün uzatıldı`)
       setShowExtendDialog(null)
       setExtendDays(30)
       fetchMembers()
@@ -695,7 +719,18 @@ export function MembersPanel() {
                             )}
                             
                             {!member.activeMembership && (
-                              <span className="text-xs text-slate-400">Üyelik eklemek için ödemeler panelini kullanın</span>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="h-7 w-7 p-0 text-emerald-500"
+                                onClick={() => {
+                                  setShowExtendDialog(member)
+                                  setExtendDays(30)
+                                }}
+                                title="Üyelik Ekle"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </Button>
                             )}
                             
                             <Button 
@@ -934,7 +969,7 @@ export function MembersPanel() {
       <Dialog open={!!showExtendDialog} onOpenChange={(open) => { if (!open) setShowExtendDialog(null) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Üyeliği Uzat</DialogTitle>
+            <DialogTitle>{showExtendDialog?.activeMembership ? 'Üyeliği Uzat' : 'Yeni Üyelik Ekle'}</DialogTitle>
             <DialogDescription>{showExtendDialog?.user.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -953,7 +988,8 @@ export function MembersPanel() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowExtendDialog(null)}>İptal</Button>
             <Button onClick={() => handleExtendMembership()} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
-              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Uzat
+              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {showExtendDialog?.activeMembership ? 'Uzat' : 'Ekle'}
             </Button>
           </DialogFooter>
         </DialogContent>

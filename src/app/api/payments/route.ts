@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
     if (memberId) where.memberId = memberId
     if (gymId) where.gymId = gymId
 
+    console.log('GET /api/payments - where:', where)
+
     const payments = await db.payment.findMany({
       where,
       include: {
@@ -28,6 +30,8 @@ export async function GET(request: NextRequest) {
       take: 100
     })
 
+    console.log(`Found ${payments.length} payments`)
+
     return NextResponse.json(payments)
   } catch (error) {
     console.error('Get payments error:', error)
@@ -39,6 +43,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { memberId, amount, type, description, gymId, debtId } = body
+
+    console.log('POST /api/payments - body:', body)
 
     if (!memberId || !amount || amount <= 0) {
       return NextResponse.json({ error: 'Eksik veya geçersiz bilgi' }, { status: 400 })
@@ -68,10 +74,13 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    const paymentGymId = gymId || member.gymId
+    console.log('Creating payment with gymId:', paymentGymId)
+
     const payment = await db.payment.create({
       data: {
         memberId,
-        gymId: gymId || member.gymId,
+        gymId: paymentGymId,
         userId: systemUser.id,
         amount,
         type: type || 'CASH',
@@ -82,6 +91,8 @@ export async function POST(request: NextRequest) {
         member: { include: { user: true } }
       }
     })
+
+    console.log('Payment created:', payment.id)
 
     // If paying a debt, update it
     if (debtId) {
