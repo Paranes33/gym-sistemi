@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
           password: 'system',
           name: 'Sistem',
           role: 'SALON_ADMIN'
+        }
       })
     }
 
