@@ -3,7 +3,6 @@
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import {
   LayoutDashboard,
@@ -33,8 +32,7 @@ interface SidebarProps {
 
 const menuItems: { id: ActivePanel; label: string; icon: React.ElementType; roles: User['role'][] }[] = [
   { id: 'dashboard', label: 'Panel', icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },
-  { id: 'members', label: 'Üyeler', icon: Users, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },
-  { id: 'memberships', label: 'Üyelikler', icon: IdCard, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },
+  { id: 'members', label: 'Üye Yönetimi', icon: Users, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },
   { id: 'payments', label: 'Ödemeler', icon: CreditCard, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },
   { id: 'gyms', label: 'Salonlar', icon: Building2, roles: ['SUPER_ADMIN'] },
   { id: 'kiosk', label: 'Kiosk', icon: Fingerprint, roles: ['SUPER_ADMIN', 'SALON_ADMIN'] },

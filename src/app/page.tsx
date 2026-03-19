@@ -6,7 +6,6 @@ import { Dashboard } from '@/components/dashboard'
 import { LoginScreen } from '@/components/login-screen'
 import { Sidebar } from '@/components/sidebar'
 import { MembersPanel } from '@/components/members-panel'
-import { MembershipsPanel } from '@/components/memberships-panel'
 import { PaymentsPanel } from '@/components/payments-panel'
 import { GymsPanel } from '@/components/gyms-panel'
 import { KioskPanel } from '@/components/kiosk-panel'
@@ -14,7 +13,7 @@ import { ReportsPanel } from '@/components/reports-panel'
 import { MemberPanel } from '@/components/member-panel'
 import { Toaster } from '@/components/ui/sonner'
 
-export type ActivePanel = 'dashboard' | 'members' | 'memberships' | 'payments' | 'gyms' | 'kiosk' | 'reports' | 'settings' | 'member-panel'
+export type ActivePanel = 'dashboard' | 'members' | 'payments' | 'gyms' | 'kiosk' | 'reports' | 'settings' | 'member-panel'
 
 export default function Home() {
   const { isAuthenticated, isLoading, user, logout, setLoading, login } = useAuthStore()
@@ -85,7 +84,6 @@ export default function Home() {
         <div className="p-4 md:p-6 min-h-screen">
           {activePanel === 'dashboard' && <Dashboard />}
           {activePanel === 'members' && <MembersPanel />}
-          {activePanel === 'memberships' && <MembershipsPanel />}
           {activePanel === 'payments' && <PaymentsPanel />}
           {activePanel === 'gyms' && user.role === 'SUPER_ADMIN' && <GymsPanel />}
           {activePanel === 'kiosk' && <KioskPanel />}
