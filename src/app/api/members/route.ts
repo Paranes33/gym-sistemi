@@ -12,6 +12,8 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const pageSize = parseInt(searchParams.get('pageSize') || '20')
 
+    console.log('GET /api/members - gymId:', gymId, 'page:', page, 'pageSize:', pageSize)
+
     const where: any = {}
 
     if (gymId) {
@@ -30,8 +32,20 @@ export async function GET(request: NextRequest) {
     const members = await db.member.findMany({
       where,
       include: {
-        user: true,
-        gym: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            image: true,
+            isActive: true
+          }
+        },
+        gym: {
+          select: { id: true, name: true }
+        },
         memberships: {
           where: { status: 'ACTIVE' },
           orderBy: { endDate: 'desc' },
@@ -45,6 +59,8 @@ export async function GET(request: NextRequest) {
       skip: (page - 1) * pageSize,
       take: pageSize
     })
+
+    console.log(`Found ${members.length} members`)
 
     // Calculate additional fields and filter by status/debt
     let filteredMembers = members.map(member => {
@@ -80,7 +96,7 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('Get members error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ error: 'Server error', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 })
   }
 }
 
