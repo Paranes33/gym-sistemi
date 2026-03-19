@@ -1,0 +1,234 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Kullanıcı rolleri
+enum UserRole {
+  SUPER_ADMIN
+  SALON_ADMIN
+  MEMBER
+}
+
+// Üyelik durumu
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+  FROZEN
+  EXPIRED
+}
+
+// Ödeme türü
+enum PaymentType {
+  CASH
+  CARD
+  ONLINE
+}
+
+// Giriş durumu
+enum EntryStatus {
+  ALLOWED
+  DENIED_EXPIRED
+  DENIED_FROZEN
+  DENIED_DEBT
+  DENIED_INACTIVE
+}
+
+// Kullanıcı tablosu (Admin ve Üyeler için)
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  phone     String?
+  role      UserRole @default(MEMBER)
+  image     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // İlişkiler
+  member         Member?
+  managedGym     Gym?      @relation("GymAdmin")
+  payments       Payment[]
+  entryLogs      EntryLog[]
+
+  @@map("users")
+}
+
+// Spor salonu (Şube)
+model Gym {
+  id          String   @id @default(cuid())
+  name        String
+  address     String?
+  phone       String?
+  email       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // İlişkiler
+  adminId     String?   @unique
+  admin       User?     @relation("GymAdmin", fields: [adminId], references: [id])
+  members     Member[]
+  memberships Membership[]
+  payments    Payment[]
+  entryLogs   EntryLog[]
+
+  @@map("gyms")
+}
+
+// Üye bilgileri
+model Member {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymId        String
+  gym          Gym      @relation(fields: [gymId], references: [id])
+  cardId       String?  @unique // Kart ID (giriş sistemi için)
+  qrCode       String?  @unique // QR kod (opsiyonel)
+  birthDate    DateTime?
+  gender       String?
+  emergencyContact String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // İlişkiler
+  memberships  Membership[]
+  debts        Debt[]
+  payments     Payment[]
+  entryLogs    EntryLog[]
+  freezes      FreezePeriod[]
+
+  @@map("members")
+}
+
+// Üyelik kayıtları
+model Membership {
+  id            String           @id @default(cuid())
+  memberId      String
+  member        Member           @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  gymId         String
+  gym           Gym              @relation(fields: [gymId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  durationDays  Int              // Süre (gün)
+  status        MembershipStatus @default(ACTIVE)
+  price         Float            // Ücret
+  paidAmount    Float            @default(0) // Ödenen tutar
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  // İlişkiler
+  payments      Payment[]
+  freezes       FreezePeriod[]
+
+  @@map("memberships")
+}
+
+// Dondurma dönemleri
+model FreezePeriod {
+  id             String   @id @default(cuid())
+  membershipId   String
+  membership     Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  startDate      DateTime
+  endDate        DateTime
+  extendedDays   Int      @default(0) // Otomatik uzatılan gün sayısı
+  reason         String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("freeze_periods")
+}
+
+// Borç kayıtları
+model Debt {
+  id          String   @id @default(cuid())
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  amount      Float
+  description String
+  dueDate     DateTime?
+  isPaid      Boolean  @default(false)
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // İlişkiler
+  payments    Payment[]
+
+  @@map("debts")
+}
+
+// Ödeme kayıtları
+model Payment {
+  id            String      @id @default(cuid())
+  amount        Float
+  type          PaymentType @default(CASH)
+  description   String?
+  
+  // İlişkisel alanlar
+  memberId      String
+  member        Member      @relation(fields: [memberId], references: [id])
+  gymId         String
+  gym           Gym         @relation(fields: [gymId], references: [id])
+  userId        String      // İşlemi yapan kullanıcı
+  user          User        @relation(fields: [userId], references: [id])
+  
+  // Opsiyonel bağlantılar
+  membershipId  String?
+  membership    Membership? @relation(fields: [membershipId], references: [id])
+  debtId        String?
+  debt          Debt?       @relation(fields: [debtId], references: [id])
+  
+  receiptNo     String?     // Fiş numarası
+  notes         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("payments")
+}
+
+// Giriş-çıkış logları
+model EntryLog {
+  id          String      @id @default(cuid())
+  memberId    String?
+  member      Member?     @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  gymId       String
+  gym         Gym         @relation(fields: [gymId], references: [id])
+  cardId      String?     // Kullanılan kart ID
+  status      EntryStatus @default(ALLOWED)
+  denialReason String?    // Red nedeni
+  entryTime   DateTime    @default(now())
+  exitTime    DateTime?
+  notes       String?
+  createdAt   DateTime    @default(now())
+
+  @@map("entry_logs")
+}
+
+// Sistem ayarları
+model SystemSettings {
+  id                    String   @id @default(cuid())
+  key                   String   @unique
+  value                 String
+  description           String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("system_settings")
+}
