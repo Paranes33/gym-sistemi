@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import bcrypt from 'bcryptjs'
 
 export async function GET(
   request: NextRequest,
@@ -16,9 +15,7 @@ export async function GET(
         memberships: {
           orderBy: { createdAt: 'desc' }
         },
-        debts: {
-          where: { isPaid: false }
-        },
+        debts: true,
         payments: {
           orderBy: { createdAt: 'desc' },
           take: 10
@@ -30,7 +27,7 @@ export async function GET(
       return NextResponse.json({ error: 'Üye bulunamadı' }, { status: 404 })
     }
 
-    const totalDebt = member.debts.reduce((sum, d) => sum + d.amount, 0)
+    const totalDebt = member.debts.filter(d => !d.isPaid).reduce((sum, d) => sum + d.amount, 0)
     const activeMembership = member.memberships.find(m => m.status === 'ACTIVE')
 
     return NextResponse.json({
@@ -78,12 +75,27 @@ export async function PUT(
       }
     }
 
+    // Sistem kullanıcısı var mı kontrol et
+    let systemUser = await db.user.findFirst({
+      where: { email: 'system@gym.local' }
+    })
+
+    if (!systemUser) {
+      systemUser = await db.user.create({
+        data: {
+          email: 'system@gym.local',
+          password: 'system',
+          name: 'Sistem',
+          role: 'SALON_ADMIN'
+        }
+      })
+    }
+
     const result = await db.$transaction(async (tx) => {
       const updateData: any = {}
       if (name) updateData.name = name
       if (email) updateData.email = email
       if (phone !== undefined) updateData.phone = phone
-      if (password) updateData.password = await bcrypt.hash(password, 10)
 
       if (Object.keys(updateData).length > 0) {
         await tx.user.update({
@@ -132,14 +144,47 @@ export async function DELETE(
       return NextResponse.json({ error: 'Üye bulunamadı' }, { status: 404 })
     }
 
+    // İlişkili kayıtları sil
     await db.$transaction(async (tx) => {
-      await tx.member.delete({ where: { id } })
-      await tx.user.delete({ where: { id: member.userId } })
+      // 1. Ödemeleri sil
+      await tx.payment.deleteMany({
+        where: { memberId: id }
+      })
+      
+      // 2. Borçları sil
+      await tx.debt.deleteMany({
+        where: { memberId: id }
+      })
+      
+      // 3. Giriş loglarını sil
+      await tx.entryLog.deleteMany({
+        where: { memberId: id }
+      })
+      
+      // 4. Dondurma kayıtlarını sil
+      await tx.freezePeriod.deleteMany({
+        where: { memberId: id }
+      })
+      
+      // 5. Üyelikleri sil
+      await tx.membership.deleteMany({
+        where: { memberId: id }
+      })
+      
+      // 6. Üyeyi sil
+      await tx.member.delete({
+        where: { id }
+      })
+      
+      // 7. Kullanıcıyı sil
+      await tx.user.delete({
+        where: { id: member.userId }
+      })
     })
 
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Delete member error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ error: 'Üye silinemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata') }, { status: 500 })
   }
 }

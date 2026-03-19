@@ -23,33 +23,28 @@ import {
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { Progress } from '@/components/ui/progress'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { 
-  Search, Plus, Edit, Trash2, Users, Filter, 
+  Search, Plus, Trash2, Users, 
   Phone, Mail, CreditCard, Calendar as CalendarIcon,
   UserCheck, UserX, Snowflake, AlertCircle, Loader2,
-  Clock, Snowflake as FreezeIcon, Ban, Check, X,
-  ChevronDown, ChevronUp, MoreVertical, Eye
+  Clock, Ban, Check, Eye, Filter, Edit
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format, addDays, differenceInDays } from 'date-fns'
 import { tr } from 'date-fns/locale'
-import type { Member, MembershipStatus, Membership } from '@/types'
+import type { Member, MembershipStatus } from '@/types'
 import { useAuthStore } from '@/store/auth'
-
-// Durum seçenekleri
-const statusOptions = [
-  { value: 'ALL', label: 'Tümü', icon: Users, color: '' },
-  { value: 'ACTIVE', label: 'Aktif', icon: UserCheck, color: 'bg-emerald-500' },
-  { value: 'EXPIRED', label: 'Süresi Dolmuş', icon: UserX, color: 'bg-red-500' },
-  { value: 'FROZEN', label: 'Dondurulmuş', icon: Snowflake, color: 'bg-cyan-500' },
-  { value: 'INACTIVE', label: 'Pasif', icon: Ban, color: 'bg-slate-500' },
-]
 
 // Hızlı üyelik süreleri
 const quickDurations = [
@@ -71,13 +66,13 @@ export function MembersPanel() {
   // Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showDetailDialog, setShowDetailDialog] = useState<Member | null>(null)
-  const [showMembershipDialog, setShowMembershipDialog] = useState<Member | null>(null)
   const [showFreezeDialog, setShowFreezeDialog] = useState<Member | null>(null)
   const [showExtendDialog, setShowExtendDialog] = useState<Member | null>(null)
+  const [showEditDateDialog, setShowEditDateDialog] = useState<Member | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Form state - Yeni üye
+  // Form state - Yeni üye (üyelik ile birlikte)
   const [memberForm, setMemberForm] = useState({
     name: '',
     email: '',
@@ -85,13 +80,8 @@ export function MembersPanel() {
     password: '',
     cardId: '',
     gender: '',
-    birthDate: '',
-    emergencyContact: '',
-    notes: ''
-  })
-
-  // Form state - Yeni üyelik
-  const [membershipForm, setMembershipForm] = useState({
+    // Üyelik bilgileri
+    addMembership: true,
     durationDays: 30,
     price: 1500,
     paidAmount: 1500,
@@ -109,19 +99,41 @@ export function MembersPanel() {
   // Form state - Uzatma
   const [extendDays, setExtendDays] = useState(30)
 
+  // Form state - Tarih düzenleme
+  const [editEndDate, setEditEndDate] = useState<Date>(new Date())
+
   const fetchMembers = useCallback(async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (statusFilter !== 'ALL') params.append('status', statusFilter)
       if (search) params.append('search', search)
-      if (showDebtOnly) params.append('hasDebt', 'true')
       if (user?.role === 'SALON_ADMIN' && gym?.id) params.append('gymId', gym.id)
 
       const response = await fetch(`/api/members?${params}`)
       if (response.ok) {
         const data = await response.json()
-        setMembers(data.data || data)
+        let membersList = data.data || data
+        
+        // Client-side filtreleme
+        if (statusFilter !== 'ALL') {
+          membersList = membersList.filter((m: Member) => {
+            if (statusFilter === 'INACTIVE') {
+              return !m.activeMembership
+            }
+            if (statusFilter === 'EXPIRING') {
+              // Son 7 gün içinde bitecek aktif üyelikler
+              const remaining = m.activeMembership ? getRemainingDays(m.activeMembership.endDate) : null
+              return m.activeMembership?.status === 'ACTIVE' && remaining !== null && remaining > 0 && remaining <= 7
+            }
+            return m.activeMembership?.status === statusFilter
+          })
+        }
+        
+        if (showDebtOnly) {
+          membersList = membersList.filter((m: Member) => (m.totalDebt || 0) > 0)
+        }
+        
+        setMembers(membersList)
       }
     } catch (error) {
       console.error('Fetch members error:', error)
@@ -129,13 +141,13 @@ export function MembersPanel() {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, search, showDebtOnly, gym?.id, user?.role])
+  }, [search, statusFilter, showDebtOnly, gym?.id, user?.role])
 
   useEffect(() => {
     fetchMembers()
   }, [fetchMembers])
 
-  // Üye ekleme
+  // Üye ekleme (üyelik ile birlikte)
   const handleAddMember = async () => {
     if (!memberForm.name || !memberForm.email || !memberForm.password) {
       toast.error('Ad, e-posta ve şifre zorunludur')
@@ -144,58 +156,51 @@ export function MembersPanel() {
 
     setSubmitting(true)
     try {
-      const response = await fetch('/api/members', {
+      // 1. Üyeyi oluştur
+      const memberResponse = await fetch('/api/members', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...memberForm,
+          name: memberForm.name,
+          email: memberForm.email,
+          phone: memberForm.phone,
+          password: memberForm.password,
+          cardId: memberForm.cardId,
+          gender: memberForm.gender,
           gymId: gym?.id
         })
       })
 
-      if (!response.ok) {
-        const error = await response.json()
+      if (!memberResponse.ok) {
+        const error = await memberResponse.json()
         throw new Error(error.error || 'Üye eklenemedi')
+      }
+
+      const newMember = await memberResponse.json()
+
+      // 2. Üyelik ekle (seçiliyse)
+      if (memberForm.addMembership && memberForm.durationDays > 0) {
+        const membershipResponse = await fetch('/api/memberships', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            memberId: newMember.id,
+            startDate: memberForm.startDate.toISOString(),
+            durationDays: memberForm.durationDays,
+            price: memberForm.price,
+            paidAmount: memberForm.paidAmount,
+            notes: memberForm.notes
+          })
+        })
+
+        if (!membershipResponse.ok) {
+          toast.warning('Üye eklendi ama üyelik oluşturulamadı')
+        }
       }
 
       toast.success('Üye başarıyla eklendi')
       setShowAddDialog(false)
       resetMemberForm()
-      fetchMembers()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Bir hata oluştu')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  // Üyelik ekleme
-  const handleAddMembership = async () => {
-    if (!showMembershipDialog) return
-
-    setSubmitting(true)
-    try {
-      const response = await fetch('/api/memberships', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          memberId: showMembershipDialog.id,
-          startDate: membershipForm.startDate.toISOString(),
-          durationDays: membershipForm.durationDays,
-          price: membershipForm.price,
-          paidAmount: membershipForm.paidAmount,
-          notes: membershipForm.notes
-        })
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Üyelik oluşturulamadı')
-      }
-
-      toast.success('Üyelik başarıyla oluşturuldu')
-      setShowMembershipDialog(null)
-      resetMembershipForm()
       fetchMembers()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Bir hata oluştu')
@@ -282,17 +287,44 @@ export function MembersPanel() {
     }
   }
 
+  // Tarih düzenleme
+  const handleEditDate = async () => {
+    if (!showEditDateDialog?.activeMembership) return
+
+    setSubmitting(true)
+    try {
+      const response = await fetch(`/api/memberships/${showEditDateDialog.activeMembership.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endDate: editEndDate.toISOString() })
+      })
+
+      if (!response.ok) throw new Error('Tarih güncellenemedi')
+
+      toast.success('Bitiş tarihi güncellendi')
+      setShowEditDateDialog(null)
+      fetchMembers()
+    } catch {
+      toast.error('Tarih güncellenemedi')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   // Üye silme
   const handleDeleteMember = async (id: string) => {
     try {
       const response = await fetch(`/api/members/${id}`, { method: 'DELETE' })
-      if (!response.ok) throw new Error('Üye silinemedi')
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Üye silinemedi')
+      }
       
       toast.success('Üye başarıyla silindi')
       setShowDeleteDialog(null)
       fetchMembers()
-    } catch {
-      toast.error('Üye silinirken hata oluştu')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Üye silinirken hata oluştu')
     }
   }
 
@@ -305,14 +337,7 @@ export function MembersPanel() {
       password: '',
       cardId: '',
       gender: '',
-      birthDate: '',
-      emergencyContact: '',
-      notes: ''
-    })
-  }
-
-  const resetMembershipForm = () => {
-    setMembershipForm({
+      addMembership: true,
       durationDays: 30,
       price: 1500,
       paidAmount: 1500,
@@ -330,17 +355,27 @@ export function MembersPanel() {
   }
 
   // Durum badge'i
-  const getStatusBadge = (status?: MembershipStatus) => {
-    switch (status) {
-      case 'ACTIVE':
-        return <Badge className="bg-emerald-500">Aktif</Badge>
-      case 'EXPIRED':
-        return <Badge variant="destructive">Süresi Dolmuş</Badge>
-      case 'FROZEN':
-        return <Badge className="bg-cyan-500">Dondurulmuş</Badge>
-      default:
-        return <Badge variant="secondary">Pasif</Badge>
+  const getStatusBadge = (member: Member) => {
+    const remaining = member.activeMembership ? getRemainingDays(member.activeMembership.endDate) : null
+    
+    if (!member.activeMembership) {
+      return <Badge variant="secondary" className="text-xs">Pasif</Badge>
     }
+    
+    if (member.activeMembership.status === 'FROZEN') {
+      return <Badge className="bg-cyan-500 text-xs">Dondurulmuş</Badge>
+    }
+    
+    if (member.activeMembership.status === 'EXPIRED' || (remaining !== null && remaining <= 0)) {
+      return <Badge variant="destructive" className="text-xs">Süresi Dolmuş</Badge>
+    }
+    
+    // Son 7 gün - Yakında dolacak
+    if (remaining !== null && remaining > 0 && remaining <= 7) {
+      return <Badge className="bg-amber-500 text-xs">Yakında Dolacak</Badge>
+    }
+    
+    return <Badge className="bg-emerald-500 text-xs">Aktif</Badge>
   }
 
   // Kalan gün hesaplama
@@ -351,336 +386,456 @@ export function MembersPanel() {
     return Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
   }
 
-  // İlerleme çubuğu
-  const getProgressValue = (membership?: Membership) => {
-    if (!membership) return 0
-    const total = membership.durationDays
-    const remaining = getRemainingDays(membership.endDate) || 0
-    const used = total - remaining
-    return Math.max(0, Math.min(100, (used / total) * 100))
-  }
-
   // İstatistikler
+  const allMembers = members
   const stats = {
-    total: members.length,
-    active: members.filter(m => m.activeMembership?.status === 'ACTIVE').length,
-    expired: members.filter(m => m.activeMembership?.status === 'EXPIRED' || 
-      (m.activeMembership && getRemainingDays(m.activeMembership.endDate) !== null && getRemainingDays(m.activeMembership.endDate) <= 0)).length,
-    frozen: members.filter(m => m.activeMembership?.status === 'FROZEN').length,
-    withDebt: members.filter(m => (m.totalDebt || 0) > 0).length,
+    total: allMembers.length,
+    active: allMembers.filter(m => {
+      if (m.activeMembership?.status !== 'ACTIVE') return false
+      const remaining = getRemainingDays(m.activeMembership.endDate)
+      return remaining !== null && remaining > 7
+    }).length,
+    expiring: allMembers.filter(m => {
+      if (m.activeMembership?.status !== 'ACTIVE') return false
+      const remaining = getRemainingDays(m.activeMembership.endDate)
+      return remaining !== null && remaining > 0 && remaining <= 7
+    }).length,
+    expired: allMembers.filter(m => 
+      m.activeMembership?.status === 'EXPIRED' || 
+      (m.activeMembership && getRemainingDays(m.activeMembership.endDate) !== null && getRemainingDays(m.activeMembership.endDate) <= 0)
+    ).length,
+    frozen: allMembers.filter(m => m.activeMembership?.status === 'FROZEN').length,
+    withDebt: allMembers.filter(m => (m.totalDebt || 0) > 0).length,
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Üye Yönetimi</h1>
-          <p className="text-slate-500 dark:text-slate-400">
-            Toplam {stats.total} üye • {stats.active} aktif • {stats.withDebt} borçlu
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
+            Toplam {stats.total} üye
           </p>
         </div>
-        <Button onClick={() => setShowAddDialog(true)} className="bg-emerald-600 hover:bg-emerald-700">
+        <Button onClick={() => { setShowAddDialog(true); resetMemberForm(); }} className="bg-emerald-600 hover:bg-emerald-700">
           <Plus className="w-4 h-4 mr-2" />
           Yeni Üye
         </Button>
       </div>
 
-      {/* İstatistik Kartları */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setStatusFilter('ALL')}>
-          <CardContent className="p-3 text-center">
-            <Users className="w-5 h-5 mx-auto mb-1 text-slate-500" />
-            <p className="text-xl font-bold">{stats.total}</p>
+      {/* Filtreler */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input
+            placeholder="İsim, telefon, e-posta veya kart ID..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-10 h-10"
+          />
+        </div>
+        
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-44 h-10">
+            <Filter className="w-4 h-4 mr-2" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">Tümü</SelectItem>
+            <SelectItem value="ACTIVE">Aktif</SelectItem>
+            <SelectItem value="EXPIRING">Yakında Dolacak</SelectItem>
+            <SelectItem value="EXPIRED">Süresi Dolmuş</SelectItem>
+            <SelectItem value="FROZEN">Dondurulmuş</SelectItem>
+            <SelectItem value="INACTIVE">Pasif</SelectItem>
+          </SelectContent>
+        </Select>
+        
+        <Button
+          variant={showDebtOnly ? "default" : "outline"}
+          size="sm"
+          onClick={() => setShowDebtOnly(!showDebtOnly)}
+          className={`h-10 ${showDebtOnly ? 'bg-amber-500 hover:bg-amber-600' : ''}`}
+        >
+          <AlertCircle className="w-4 h-4 mr-2" />
+          Borçlu ({stats.withDebt})
+        </Button>
+      </div>
+
+      {/* Özet Kartları */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${statusFilter === 'ALL' && !showDebtOnly ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('ALL'); setShowDebtOnly(false); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold">{stats.total}</p>
             <p className="text-xs text-slate-500">Toplam</p>
-          </CardContent>
-        </Card>
-        <Card className={`cursor-pointer hover:shadow-md transition-shadow ${statusFilter === 'ACTIVE' ? 'ring-2 ring-emerald-500' : ''}`} onClick={() => setStatusFilter(statusFilter === 'ACTIVE' ? 'ALL' : 'ACTIVE')}>
-          <CardContent className="p-3 text-center">
-            <UserCheck className="w-5 h-5 mx-auto mb-1 text-emerald-500" />
-            <p className="text-xl font-bold text-emerald-600">{stats.active}</p>
+          </div>
+        </div>
+        
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${statusFilter === 'ACTIVE' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('ACTIVE'); setShowDebtOnly(false); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold text-emerald-600">{stats.active}</p>
             <p className="text-xs text-slate-500">Aktif</p>
-          </CardContent>
-        </Card>
-        <Card className={`cursor-pointer hover:shadow-md transition-shadow ${statusFilter === 'EXPIRED' ? 'ring-2 ring-red-500' : ''}`} onClick={() => setStatusFilter(statusFilter === 'EXPIRED' ? 'ALL' : 'EXPIRED')}>
-          <CardContent className="p-3 text-center">
-            <UserX className="w-5 h-5 mx-auto mb-1 text-red-500" />
-            <p className="text-xl font-bold text-red-600">{stats.expired}</p>
-            <p className="text-xs text-slate-500">Süresi Dolmuş</p>
-          </CardContent>
-        </Card>
-        <Card className={`cursor-pointer hover:shadow-md transition-shadow ${statusFilter === 'FROZEN' ? 'ring-2 ring-cyan-500' : ''}`} onClick={() => setStatusFilter(statusFilter === 'FROZEN' ? 'ALL' : 'FROZEN')}>
-          <CardContent className="p-3 text-center">
-            <Snowflake className="w-5 h-5 mx-auto mb-1 text-cyan-500" />
-            <p className="text-xl font-bold text-cyan-600">{stats.frozen}</p>
+          </div>
+        </div>
+        
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${statusFilter === 'EXPIRING' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('EXPIRING'); setShowDebtOnly(false); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold text-amber-600">{stats.expiring}</p>
+            <p className="text-xs text-slate-500">Yakında</p>
+          </div>
+        </div>
+        
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${statusFilter === 'EXPIRED' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('EXPIRED'); setShowDebtOnly(false); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold text-red-600">{stats.expired}</p>
+            <p className="text-xs text-slate-500">Süresi D.</p>
+          </div>
+        </div>
+        
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${statusFilter === 'FROZEN' ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('FROZEN'); setShowDebtOnly(false); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold text-cyan-600">{stats.frozen}</p>
             <p className="text-xs text-slate-500">Dondurulmuş</p>
-          </CardContent>
-        </Card>
-        <Card className={`cursor-pointer hover:shadow-md transition-shadow ${showDebtOnly ? 'ring-2 ring-amber-500' : ''}`} onClick={() => setShowDebtOnly(!showDebtOnly)}>
-          <CardContent className="p-3 text-center">
-            <AlertCircle className="w-5 h-5 mx-auto mb-1 text-amber-500" />
-            <p className="text-xl font-bold text-amber-600">{stats.withDebt}</p>
+          </div>
+        </div>
+        
+        <div 
+          className={`p-2 rounded-lg border cursor-pointer transition-all ${showDebtOnly ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-700'}`}
+          onClick={() => { setStatusFilter('ALL'); setShowDebtOnly(!showDebtOnly); }}
+        >
+          <div className="text-center">
+            <p className="text-lg font-bold text-amber-600">{stats.withDebt}</p>
             <p className="text-xs text-slate-500">Borçlu</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Arama */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input
-          placeholder="İsim, telefon, e-posta veya kart ID ile ara..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-10 h-11"
-        />
-      </div>
-
-      {/* Üye Listesi */}
-      {loading ? (
-        <div className="space-y-3">
-          {[...Array(5)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardContent className="p-4">
-                <div className="h-20 bg-slate-200 dark:bg-slate-700 rounded" />
-              </CardContent>
-            </Card>
-          ))}
+          </div>
         </div>
-      ) : members.length === 0 ? (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <Users className="w-12 h-12 mx-auto mb-4 text-slate-300" />
-            <p className="text-slate-500">Üye bulunamadı</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {members.map((member) => {
-            const remainingDays = getRemainingDays(member.activeMembership?.endDate)
-            const progress = getProgressValue(member.activeMembership)
-            
-            return (
-              <Card key={member.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                <CardContent className="p-0">
-                  <div className="flex flex-col sm:flex-row">
-                    {/* Ana Bilgi */}
-                    <div className="flex-1 p-4">
-                      <div className="flex items-start gap-4">
-                        <Avatar className="w-14 h-14">
-                          <AvatarImage src={member.user.image} />
-                          <AvatarFallback className="bg-emerald-500 text-white text-lg">
-                            {member.user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
+      </div>
+
+      {/* Üye Tablosu */}
+      <Card>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="p-8 text-center">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-500" />
+            </div>
+          ) : members.length === 0 ? (
+            <div className="p-12 text-center">
+              <Users className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <p className="text-slate-500">Üye bulunamadı</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50 dark:bg-slate-800/50">
+                    <TableHead className="w-8">#</TableHead>
+                    <TableHead>Üye</TableHead>
+                    <TableHead>İletişim</TableHead>
+                    <TableHead>Kart ID</TableHead>
+                    <TableHead>Durum</TableHead>
+                    <TableHead>Üyelik Bitiş</TableHead>
+                    <TableHead>Kalan</TableHead>
+                    <TableHead>Borç</TableHead>
+                    <TableHead className="text-right">İşlemler</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {members.map((member, index) => {
+                    const remainingDays = getRemainingDays(member.activeMembership?.endDate)
+                    
+                    return (
+                      <TableRow key={member.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <TableCell className="text-slate-400 text-sm">{index + 1}</TableCell>
                         
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="font-semibold text-lg">{member.user.name}</h3>
-                            {getStatusBadge(member.activeMembership?.status)}
-                            {(member.totalDebt || 0) > 0 && (
-                              <Badge variant="destructive" className="text-xs">
-                                ₺{member.totalDebt?.toLocaleString()} Borç
-                              </Badge>
-                            )}
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Avatar className="w-8 h-8">
+                              <AvatarImage src={member.user.image} />
+                              <AvatarFallback className="bg-emerald-500 text-white text-xs">
+                                {member.user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium text-sm">{member.user.name}</span>
                           </div>
-                          
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
+                        </TableCell>
+                        
+                        <TableCell>
+                          <div className="text-sm">
+                            <p className="truncate max-w-32">{member.user.email}</p>
                             {member.user.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="w-3 h-3" />
-                                {member.user.phone}
-                              </span>
+                              <p className="text-slate-500 text-xs">{member.user.phone}</p>
                             )}
-                            <span className="flex items-center gap-1">
-                              <Mail className="w-3 h-3" />
-                              {member.user.email}
+                          </div>
+                        </TableCell>
+                        
+                        <TableCell>
+                          {member.cardId ? (
+                            <code className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                              {member.cardId}
+                            </code>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </TableCell>
+                        
+                        <TableCell>
+                          {getStatusBadge(member)}
+                        </TableCell>
+                        
+                        <TableCell>
+                          {member.activeMembership ? (
+                            <span className="text-sm">
+                              {format(new Date(member.activeMembership.endDate), 'dd MMM yyyy', { locale: tr })}
                             </span>
-                            {member.cardId && (
-                              <span className="flex items-center gap-1">
-                                <CreditCard className="w-3 h-3" />
-                                {member.cardId}
-                              </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">Üyelik yok</span>
+                          )}
+                        </TableCell>
+                        
+                        <TableCell>
+                          {member.activeMembership ? (
+                            <span className={`font-medium text-sm ${
+                              remainingDays !== null && remainingDays <= 0 ? 'text-red-600' :
+                              remainingDays !== null && remainingDays <= 3 ? 'text-red-500' :
+                              remainingDays !== null && remainingDays <= 7 ? 'text-amber-500' :
+                              'text-emerald-600'
+                            }`}>
+                              {remainingDays !== null && remainingDays > 0 ? `${remainingDays} gün` : 'Süresi doldu'}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        
+                        <TableCell>
+                          {(member.totalDebt || 0) > 0 ? (
+                            <span className="text-red-600 font-medium text-sm">
+                              ₺{member.totalDebt?.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </TableCell>
+                        
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setShowDetailDialog(member)}
+                              title="Detay"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </Button>
+                            
+                            {member.activeMembership?.status === 'ACTIVE' && (
+                              <>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-purple-500"
+                                  onClick={() => {
+                                    setShowEditDateDialog(member)
+                                    setEditEndDate(new Date(member.activeMembership!.endDate))
+                                  }}
+                                  title="Tarih Değiştir"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-blue-500"
+                                  onClick={() => {
+                                    setShowExtendDialog(member)
+                                    setExtendDays(30)
+                                  }}
+                                  title="Uzat"
+                                >
+                                  <Clock className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-cyan-500"
+                                  onClick={() => {
+                                    setShowFreezeDialog(member)
+                                    resetFreezeForm()
+                                  }}
+                                  title="Dondur"
+                                >
+                                  <Snowflake className="w-3.5 h-3.5" />
+                                </Button>
+                              </>
                             )}
+                            
+                            {member.activeMembership?.status === 'FROZEN' && (
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="h-7 w-7 p-0 text-emerald-500"
+                                onClick={() => handleUnfreezeMembership(member)}
+                                title="Aktif Et"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            
+                            {!member.activeMembership && (
+                              <span className="text-xs text-slate-400">Üyelik eklemek için ödemeler panelini kullanın</span>
+                            )}
+                            
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              className="h-7 w-7 p-0 text-red-500"
+                              onClick={() => setShowDeleteDialog(member.id)}
+                              title="Sil"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
                           </div>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Üyelik Bilgisi */}
-                    <div className="sm:w-72 border-t sm:border-t-0 sm:border-l border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4">
-                      {member.activeMembership ? (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-500">Üyelik</span>
-                            <span className="font-semibold">{member.activeMembership.durationDays} Günlük</span>
-                          </div>
-                          
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="text-slate-500">Kalan</span>
-                              <span className={`font-bold ${remainingDays !== null && remainingDays <= 3 ? 'text-red-500' : remainingDays !== null && remainingDays <= 7 ? 'text-amber-500' : 'text-emerald-600'}`}>
-                                {remainingDays !== null && remainingDays > 0 ? `${remainingDays} gün` : 'Süresi doldu'}
-                              </span>
-                            </div>
-                            <Progress value={progress} className="h-2" />
-                          </div>
-                          
-                          <div className="flex items-center justify-between text-xs text-slate-500">
-                            <span>{format(new Date(member.activeMembership.startDate), 'dd MMM', { locale: tr })}</span>
-                            <span>{format(new Date(member.activeMembership.endDate), 'dd MMM yyyy', { locale: tr })}</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-center py-4">
-                          <AlertCircle className="w-8 h-8 mx-auto mb-2 text-amber-500" />
-                          <p className="text-sm text-slate-500">Aktif üyelik yok</p>
-                          <Button 
-                            size="sm" 
-                            className="mt-2 bg-emerald-600 hover:bg-emerald-700"
-                            onClick={() => {
-                              setShowMembershipDialog(member)
-                              resetMembershipForm()
-                            }}
-                          >
-                            Üyelik Ekle
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* İşlemler */}
-                    <div className="flex sm:flex-col justify-end gap-1 p-2 border-t sm:border-t-0 sm:border-l border-slate-200 dark:border-slate-700">
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => setShowDetailDialog(member)}
-                        title="Detay"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                      
-                      {member.activeMembership?.status === 'ACTIVE' && (
-                        <>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => {
-                              setShowExtendDialog(member)
-                              setExtendDays(30)
-                            }}
-                            title="Uzat"
-                          >
-                            <Clock className="w-4 h-4 text-blue-500" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
-                            onClick={() => {
-                              setShowFreezeDialog(member)
-                              resetFreezeForm()
-                            }}
-                            title="Dondur"
-                          >
-                            <FreezeIcon className="w-4 h-4 text-cyan-500" />
-                          </Button>
-                        </>
-                      )}
-                      
-                      {member.activeMembership?.status === 'FROZEN' && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleUnfreezeMembership(member)}
-                          title="Aktif Et"
-                          className="text-emerald-600"
-                        >
-                          <Check className="w-4 h-4" />
-                        </Button>
-                      )}
-                      
-                      {!member.activeMembership && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => {
-                            setShowMembershipDialog(member)
-                            resetMembershipForm()
-                          }}
-                          title="Üyelik Ekle"
-                          className="text-emerald-600"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </Button>
-                      )}
-                      
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        onClick={() => setShowDeleteDialog(member.id)}
-                        title="Sil"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ========== DİALOGLAR ========== */}
 
-      {/* Yeni Üye Dialog */}
+      {/* Yeni Üye Dialog (üyelik dahil) */}
       <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Yeni Üye Ekle</DialogTitle>
-            <DialogDescription>Yeni bir üye kaydı oluşturun</DialogDescription>
+            <DialogDescription>Üye bilgilerini ve üyelik detaylarını girin</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Ad Soyad *</Label>
-                <Input value={memberForm.name} onChange={(e) => setMemberForm({ ...memberForm, name: e.target.value })} />
+          <div className="space-y-4 py-4 max-h-96 overflow-y-auto">
+            {/* Üye Bilgileri */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-slate-500">Üye Bilgileri</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Ad Soyad *</Label>
+                  <Input value={memberForm.name} onChange={(e) => setMemberForm({ ...memberForm, name: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">E-posta *</Label>
+                  <Input type="email" value={memberForm.email} onChange={(e) => setMemberForm({ ...memberForm, email: e.target.value })} className="h-9" />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>E-posta *</Label>
-                <Input type="email" value={memberForm.email} onChange={(e) => setMemberForm({ ...memberForm, email: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Telefon</Label>
+                  <Input value={memberForm.phone} onChange={(e) => setMemberForm({ ...memberForm, phone: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Şifre *</Label>
+                  <Input type="password" value={memberForm.password} onChange={(e) => setMemberForm({ ...memberForm, password: e.target.value })} className="h-9" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Kart ID</Label>
+                  <Input value={memberForm.cardId} onChange={(e) => setMemberForm({ ...memberForm, cardId: e.target.value })} placeholder="CARD001" className="h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Cinsiyet</Label>
+                  <Select value={memberForm.gender} onValueChange={(value) => setMemberForm({ ...memberForm, gender: value })}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Seçin" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="male">Erkek</SelectItem>
+                      <SelectItem value="female">Kadın</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Telefon</Label>
-                <Input value={memberForm.phone} onChange={(e) => setMemberForm({ ...memberForm, phone: e.target.value })} />
+            
+            <Separator />
+            
+            {/* Üyelik Bilgileri */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <input 
+                  type="checkbox" 
+                  checked={memberForm.addMembership} 
+                  onChange={(e) => setMemberForm({ ...memberForm, addMembership: e.target.checked })}
+                  className="rounded"
+                />
+                <Label className="text-sm font-medium">Üyelik Ekle</Label>
               </div>
-              <div className="space-y-2">
-                <Label>Şifre *</Label>
-                <Input type="password" value={memberForm.password} onChange={(e) => setMemberForm({ ...memberForm, password: e.target.value })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Kart ID</Label>
-                <Input value={memberForm.cardId} onChange={(e) => setMemberForm({ ...memberForm, cardId: e.target.value })} placeholder="CARD001" />
-              </div>
-              <div className="space-y-2">
-                <Label>Cinsiyet</Label>
-                <Select value={memberForm.gender} onValueChange={(value) => setMemberForm({ ...memberForm, gender: value })}>
-                  <SelectTrigger><SelectValue placeholder="Seçin" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="male">Erkek</SelectItem>
-                    <SelectItem value="female">Kadın</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Notlar</Label>
-              <Textarea value={memberForm.notes} onChange={(e) => setMemberForm({ ...memberForm, notes: e.target.value })} rows={2} />
+              
+              {memberForm.addMembership && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Başlangıç Tarihi</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" className="w-full justify-start h-9">
+                          <CalendarIcon className="w-3.5 h-3.5 mr-2" />
+                          {format(memberForm.startDate, 'dd MMMM yyyy', { locale: tr })}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0">
+                        <Calendar mode="single" selected={memberForm.startDate} onSelect={(date) => date && setMemberForm({ ...memberForm, startDate: date })} />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Süre</Label>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {quickDurations.map((d) => (
+                        <Button 
+                          key={d.days} 
+                          variant={memberForm.durationDays === d.days ? 'default' : 'outline'} 
+                          size="sm" 
+                          onClick={() => setMemberForm({ ...memberForm, durationDays: d.days, price: d.price, paidAmount: d.price })} 
+                          className={`h-8 text-xs ${memberForm.durationDays === d.days ? 'bg-emerald-600' : ''}`}
+                        >
+                          {d.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Toplam Ücret (₺)</Label>
+                      <Input type="number" value={memberForm.price} onChange={(e) => setMemberForm({ ...memberForm, price: Number(e.target.value) })} className="h-9" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Ödenen (₺)</Label>
+                      <Input type="number" value={memberForm.paidAmount} onChange={(e) => setMemberForm({ ...memberForm, paidAmount: Number(e.target.value) })} className="h-9" />
+                    </div>
+                  </div>
+                  
+                  {memberForm.paidAmount < memberForm.price && (
+                    <div className="p-2 bg-red-50 dark:bg-red-900/20 rounded text-sm text-red-600 dark:text-red-400">
+                      Borç oluşacak: ₺{(memberForm.price - memberForm.paidAmount).toLocaleString()}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -692,61 +847,31 @@ export function MembersPanel() {
         </DialogContent>
       </Dialog>
 
-      {/* Üyelik Ekle Dialog */}
-      <Dialog open={!!showMembershipDialog} onOpenChange={(open) => { if (!open) setShowMembershipDialog(null) }}>
-        <DialogContent className="max-w-lg">
+      {/* Tarih Düzenle Dialog */}
+      <Dialog open={!!showEditDateDialog} onOpenChange={(open) => { if (!open) setShowEditDateDialog(null) }}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Üyelik Ekle</DialogTitle>
-            <DialogDescription>{showMembershipDialog?.user.name} için yeni üyelik</DialogDescription>
+            <DialogTitle>Bitiş Tarihi Değiştir</DialogTitle>
+            <DialogDescription>{showEditDateDialog?.user.name}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Başlangıç Tarihi</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start">
-                    <CalendarIcon className="w-4 h-4 mr-2" />
-                    {format(membershipForm.startDate, 'dd MMMM yyyy', { locale: tr })}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0">
-                  <Calendar mode="single" selected={membershipForm.startDate} onSelect={(date) => date && setMembershipForm({ ...membershipForm, startDate: date })} />
-                </PopoverContent>
-              </Popover>
-            </div>
-            
-            <div className="space-y-2">
-              <Label>Süre</Label>
-              <div className="flex gap-2 flex-wrap">
-                {quickDurations.map((d) => (
-                  <Button key={d.days} variant={membershipForm.durationDays === d.days ? 'default' : 'outline'} size="sm" onClick={() => setMembershipForm({ ...membershipForm, durationDays: d.days, price: d.price, paidAmount: d.price })} className={membershipForm.durationDays === d.days ? 'bg-emerald-600' : ''}>
-                    {d.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Toplam Ücret</Label>
-                <Input type="number" value={membershipForm.price} onChange={(e) => setMembershipForm({ ...membershipForm, price: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Ödenen</Label>
-                <Input type="number" value={membershipForm.paidAmount} onChange={(e) => setMembershipForm({ ...membershipForm, paidAmount: Number(e.target.value) })} />
-              </div>
-            </div>
-            
-            {membershipForm.paidAmount < membershipForm.price && (
-              <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                <p className="text-sm text-red-600 dark:text-red-400">Borç: ₺{(membershipForm.price - membershipForm.paidAmount).toLocaleString()}</p>
-              </div>
-            )}
+          <div className="py-4">
+            <Label>Yeni Bitiş Tarihi</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-start mt-2">
+                  <CalendarIcon className="w-4 h-4 mr-2" />
+                  {format(editEndDate, 'dd MMMM yyyy', { locale: tr })}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0">
+                <Calendar mode="single" selected={editEndDate} onSelect={(date) => date && setEditEndDate(date)} />
+              </PopoverContent>
+            </Popover>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowMembershipDialog(null)}>İptal</Button>
-            <Button onClick={handleAddMembership} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
-              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Oluştur
+            <Button variant="outline" onClick={() => setShowEditDateDialog(null)}>İptal</Button>
+            <Button onClick={handleEditDate} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
+              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Kaydet
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -757,7 +882,7 @@ export function MembersPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Üyeliği Dondur</DialogTitle>
-            <DialogDescription>{showFreezeDialog?.user.name} - Üyeliği geçici olarak dondurun</DialogDescription>
+            <DialogDescription>{showFreezeDialog?.user.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -791,8 +916,8 @@ export function MembersPanel() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Sebep</Label>
-              <Input value={freezeForm.reason} onChange={(e) => setFreezeForm({ ...freezeForm, reason: e.target.value })} placeholder="Dondurma sebebi (opsiyonel)" />
+              <Label>Sebep (Opsiyonel)</Label>
+              <Input value={freezeForm.reason} onChange={(e) => setFreezeForm({ ...freezeForm, reason: e.target.value })} />
             </div>
             <p className="text-sm text-slate-500">Dondurma süresi kadar üyelik otomatik uzatılacak.</p>
           </div>
@@ -810,7 +935,7 @@ export function MembersPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Üyeliği Uzat</DialogTitle>
-            <DialogDescription>{showExtendDialog?.user.name} - Üyelik süresini uzatın</DialogDescription>
+            <DialogDescription>{showExtendDialog?.user.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="flex gap-2 flex-wrap">
@@ -827,7 +952,7 @@ export function MembersPanel() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowExtendDialog(null)}>İptal</Button>
-            <Button onClick={handleExtendMembership} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
+            <Button onClick={() => handleExtendMembership()} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
               {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Uzat
             </Button>
           </DialogFooter>
@@ -841,33 +966,33 @@ export function MembersPanel() {
             <DialogTitle>Üye Detayları</DialogTitle>
           </DialogHeader>
           {showDetailDialog && (
-            <div className="space-y-6 py-4">
+            <div className="space-y-4 py-4">
               <div className="flex items-center gap-4">
-                <Avatar className="w-16 h-16">
-                  <AvatarFallback className="bg-emerald-500 text-white text-xl">
+                <Avatar className="w-14 h-14">
+                  <AvatarFallback className="bg-emerald-500 text-white text-lg">
                     {showDetailDialog.user.name.split(' ').map(n => n[0]).join('').toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
                 <div>
-                  <h3 className="text-xl font-bold">{showDetailDialog.user.name}</h3>
-                  <p className="text-slate-500">{showDetailDialog.user.email}</p>
-                  {showDetailDialog.cardId && <p className="text-sm text-slate-400">Kart: {showDetailDialog.cardId}</p>}
+                  <h3 className="text-lg font-bold">{showDetailDialog.user.name}</h3>
+                  <p className="text-sm text-slate-500">{showDetailDialog.user.email}</p>
+                  {showDetailDialog.cardId && <p className="text-xs text-slate-400">Kart: {showDetailDialog.cardId}</p>}
                 </div>
               </div>
               
               <Separator />
               
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="grid grid-cols-4 gap-3">
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-center">
                   <p className="text-xs text-slate-500">Durum</p>
-                  {getStatusBadge(showDetailDialog.activeMembership?.status)}
+                  {getStatusBadge(showDetailDialog)}
                 </div>
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-center">
                   <p className="text-xs text-slate-500">Kalan Gün</p>
                   <p className="text-lg font-bold">{getRemainingDays(showDetailDialog.activeMembership?.endDate) ?? '-'}</p>
                 </div>
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-center">
-                  <p className="text-xs text-slate-500">Toplam Ödeme</p>
+                  <p className="text-xs text-slate-500">Ödeme</p>
                   <p className="text-lg font-bold text-emerald-600">₺{(showDetailDialog.payments?.reduce((s, p) => s + p.amount, 0) || 0).toLocaleString()}</p>
                 </div>
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-center">
@@ -885,7 +1010,7 @@ export function MembersPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Üye Sil</DialogTitle>
-            <DialogDescription>Bu üyeyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.</DialogDescription>
+            <DialogDescription>Silmek istediğinizden emin misiniz?</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDeleteDialog(null)}>İptal</Button>

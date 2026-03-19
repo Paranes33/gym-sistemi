@@ -20,26 +20,37 @@ export async function POST(
       return NextResponse.json({ error: 'Üyelik dondurulmuş değil' }, { status: 400 })
     }
 
-    // Deactivate active freeze periods
+    // Aktif dondurma kayıtlarını kapat
     await db.freezePeriod.updateMany({
       where: {
         membershipId: id,
         isActive: true
       },
-      data: { isActive: false }
+      data: {
+        isActive: false
+      }
     })
 
+    // Üyeliği aktif yap
     const updated = await db.membership.update({
       where: { id },
-      data: { status: 'ACTIVE' },
+      data: {
+        status: 'ACTIVE'
+      },
       include: {
-        member: { include: { user: true } }
+        member: {
+          include: {
+            user: true
+          }
+        }
       }
     })
 
     return NextResponse.json(updated)
   } catch (error) {
     console.error('Unfreeze membership error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ 
+      error: 'Server error: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata') 
+    }, { status: 500 })
   }
 }

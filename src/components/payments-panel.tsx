@@ -33,7 +33,8 @@ import {
 } from '@/components/ui/table'
 import { 
   Plus, DollarSign, CreditCard, TrendingUp, Search, 
-  Trash2, Loader2, AlertCircle, CheckCircle, Wallet
+  Trash2, Loader2, AlertCircle, CheckCircle, Wallet,
+  User
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -65,7 +66,6 @@ export function PaymentsPanel() {
   const [debtMember, setDebtMember] = useState('')
   const [debtAmount, setDebtAmount] = useState(0)
   const [debtDescription, setDebtDescription] = useState('')
-  const [debtDueDate, setDebtDueDate] = useState('')
 
   // Pay debt form
   const [payAmount, setPayAmount] = useState(0)
@@ -74,20 +74,30 @@ export function PaymentsPanel() {
     setLoading(true)
     try {
       const gymId = user?.role === 'SALON_ADMIN' ? gym?.id : undefined
+      
       const [paymentsRes, debtsRes, membersRes] = await Promise.all([
         fetch(`/api/payments${gymId ? `?gymId=${gymId}` : ''}`),
         fetch(`/api/debts${gymId ? `?gymId=${gymId}` : ''}`),
         fetch(`/api/members?pageSize=100${gymId ? `&gymId=${gymId}` : ''}`)
       ])
 
-      if (paymentsRes.ok) setPayments(await paymentsRes.json())
-      if (debtsRes.ok) setDebts(await debtsRes.json())
+      if (paymentsRes.ok) {
+        const data = await paymentsRes.json()
+        setPayments(Array.isArray(data) ? data : (data.data || []))
+      }
+      
+      if (debtsRes.ok) {
+        const data = await debtsRes.json()
+        setDebts(Array.isArray(data) ? data : (data.data || []))
+      }
+      
       if (membersRes.ok) {
         const data = await membersRes.json()
-        setMembers(data.data || data)
+        setMembers(Array.isArray(data) ? data : (data.data || []))
       }
     } catch (error) {
       console.error('Fetch error:', error)
+      toast.error('Veriler yüklenirken hata oluştu')
     } finally {
       setLoading(false)
     }
@@ -147,8 +157,7 @@ export function PaymentsPanel() {
         body: JSON.stringify({
           memberId: debtMember,
           amount: debtAmount,
-          description: debtDescription,
-          dueDate: debtDueDate || undefined
+          description: debtDescription
         })
       })
 
@@ -220,7 +229,6 @@ export function PaymentsPanel() {
     setDebtMember('')
     setDebtAmount(0)
     setDebtDescription('')
-    setDebtDueDate('')
   }
 
   const totalDebts = debts.filter(d => !d.isPaid).reduce((sum, d) => sum + d.amount, 0)
@@ -242,28 +250,29 @@ export function PaymentsPanel() {
   })
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Ödeme & Borç Yönetimi</h1>
-          <p className="text-slate-500 dark:text-slate-400">
+          <p className="text-slate-500 dark:text-slate-400 text-sm">
             Ödemeler ve borç takibi
           </p>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500">Bugünkü Gelir</p>
-                <p className="text-2xl font-bold text-emerald-600">₺{todayTotal.toLocaleString()}</p>
+                <p className="text-xs text-slate-500">Bugünkü Gelir</p>
+                <p className="text-xl font-bold text-emerald-600">₺{todayTotal.toLocaleString()}</p>
+                <p className="text-xs text-slate-400">{todayPayments.length} ödeme</p>
               </div>
-              <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl">
-                <TrendingUp className="w-6 h-6 text-emerald-600" />
+              <div className="p-2.5 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl">
+                <TrendingUp className="w-5 h-5 text-emerald-600" />
               </div>
             </div>
           </CardContent>
@@ -272,11 +281,12 @@ export function PaymentsPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500">Toplam Borç</p>
-                <p className="text-2xl font-bold text-red-600">₺{totalDebts.toLocaleString()}</p>
+                <p className="text-xs text-slate-500">Toplam Borç</p>
+                <p className="text-xl font-bold text-red-600">₺{totalDebts.toLocaleString()}</p>
+                <p className="text-xs text-slate-400">{debts.filter(d => !d.isPaid).length} üye</p>
               </div>
-              <div className="p-3 bg-red-100 dark:bg-red-900/30 rounded-xl">
-                <AlertCircle className="w-6 h-6 text-red-600" />
+              <div className="p-2.5 bg-red-100 dark:bg-red-900/30 rounded-xl">
+                <AlertCircle className="w-5 h-5 text-red-600" />
               </div>
             </div>
           </CardContent>
@@ -285,11 +295,12 @@ export function PaymentsPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500">Bugün Ödeme</p>
-                <p className="text-2xl font-bold text-blue-600">{todayPayments.length}</p>
+                <p className="text-xs text-slate-500">Toplam Ödeme</p>
+                <p className="text-xl font-bold text-blue-600">₺{payments.reduce((s, p) => s + p.amount, 0).toLocaleString()}</p>
+                <p className="text-xs text-slate-400">{payments.length} işlem</p>
               </div>
-              <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
-                <Wallet className="w-6 h-6 text-blue-600" />
+              <div className="p-2.5 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
+                <Wallet className="w-5 h-5 text-blue-600" />
               </div>
             </div>
           </CardContent>
@@ -298,27 +309,27 @@ export function PaymentsPanel() {
 
       {/* Tabs */}
       <Tabs defaultValue="payments" className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="payments">Ödemeler</TabsTrigger>
-            <TabsTrigger value="debts">Borçlar</TabsTrigger>
+            <TabsTrigger value="payments">Ödemeler ({payments.length})</TabsTrigger>
+            <TabsTrigger value="debts">Borçlar ({debts.filter(d => !d.isPaid).length})</TabsTrigger>
           </TabsList>
           <div className="flex gap-2">
-            <div className="relative flex-1 sm:w-64">
+            <div className="relative flex-1 sm:w-48">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <Input
                 placeholder="Ara..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
+                className="pl-9 h-9"
               />
             </div>
-            <Button onClick={() => setShowPaymentDialog(true)} className="bg-emerald-600 hover:bg-emerald-700">
-              <Plus className="w-4 h-4 mr-2" />
+            <Button onClick={() => setShowPaymentDialog(true)} size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-9">
+              <Plus className="w-4 h-4 mr-1" />
               Ödeme
             </Button>
-            <Button onClick={() => setShowDebtDialog(true)} variant="outline">
-              <Plus className="w-4 h-4 mr-2" />
+            <Button onClick={() => setShowDebtDialog(true)} variant="outline" size="sm" className="h-9">
+              <Plus className="w-4 h-4 mr-1" />
               Borç
             </Button>
           </div>
@@ -333,14 +344,16 @@ export function PaymentsPanel() {
                   <Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-500" />
                 </div>
               ) : filteredPayments.length === 0 ? (
-                <div className="p-12 text-center text-slate-500">
-                  Ödeme bulunamadı
+                <div className="p-8 text-center text-slate-500">
+                  <DollarSign className="w-10 h-10 mx-auto mb-2 text-slate-300" />
+                  <p>Ödeme bulunamadı</p>
+                  <p className="text-sm">Yeni ödeme eklemek için yukarıdaki "Ödeme" butonunu kullanın</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow>
+                      <TableRow className="bg-slate-50 dark:bg-slate-800/50">
                         <TableHead>Üye</TableHead>
                         <TableHead>Tutar</TableHead>
                         <TableHead>Tür</TableHead>
@@ -352,21 +365,26 @@ export function PaymentsPanel() {
                       {filteredPayments.slice(0, 50).map((payment) => (
                         <TableRow key={payment.id}>
                           <TableCell>
-                            <div>
-                              <p className="font-medium">{payment.member?.user?.name || 'Bilinmiyor'}</p>
-                              <p className="text-sm text-slate-500">{payment.member?.user?.email}</p>
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                                <User className="w-4 h-4 text-slate-500" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm">{payment.member?.user?.name || 'Bilinmiyor'}</p>
+                                <p className="text-xs text-slate-500">{payment.member?.user?.email}</p>
+                              </div>
                             </div>
                           </TableCell>
                           <TableCell className="font-semibold text-emerald-600">
                             ₺{payment.amount.toLocaleString()}
                           </TableCell>
                           <TableCell>
-                            <Badge variant={payment.type === 'CASH' ? 'default' : 'secondary'}>
+                            <Badge variant={payment.type === 'CASH' ? 'default' : 'secondary'} className="text-xs">
                               {payment.type === 'CASH' ? 'Nakit' : payment.type === 'CARD' ? 'Kart' : 'Online'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-slate-500">{payment.description || '-'}</TableCell>
-                          <TableCell className="text-slate-500">
+                          <TableCell className="text-slate-500 text-sm max-w-32 truncate">{payment.description || '-'}</TableCell>
+                          <TableCell className="text-slate-500 text-sm">
                             {format(new Date(payment.createdAt), 'dd MMM yyyy HH:mm', { locale: tr })}
                           </TableCell>
                         </TableRow>
@@ -388,19 +406,20 @@ export function PaymentsPanel() {
                   <Loader2 className="w-8 h-8 animate-spin mx-auto text-emerald-500" />
                 </div>
               ) : filteredDebts.length === 0 ? (
-                <div className="p-12 text-center text-slate-500">
-                  Borç bulunamadı
+                <div className="p-8 text-center text-slate-500">
+                  <CheckCircle className="w-10 h-10 mx-auto mb-2 text-emerald-300" />
+                  <p>Borç bulunamadı</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
-                      <TableRow>
+                      <TableRow className="bg-slate-50 dark:bg-slate-800/50">
                         <TableHead>Üye</TableHead>
                         <TableHead>Tutar</TableHead>
                         <TableHead>Açıklama</TableHead>
-                        <TableHead>Son Tarih</TableHead>
                         <TableHead>Durum</TableHead>
+                        <TableHead>Tarih</TableHead>
                         <TableHead>İşlemler</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -408,24 +427,29 @@ export function PaymentsPanel() {
                       {filteredDebts.map((debt) => (
                         <TableRow key={debt.id}>
                           <TableCell>
-                            <div>
-                              <p className="font-medium">{debt.member?.user?.name || 'Bilinmiyor'}</p>
-                              <p className="text-sm text-slate-500">{debt.member?.user?.email}</p>
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center">
+                                <User className="w-4 h-4 text-slate-500" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm">{debt.member?.user?.name || 'Bilinmiyor'}</p>
+                                <p className="text-xs text-slate-500">{debt.member?.user?.email}</p>
+                              </div>
                             </div>
                           </TableCell>
                           <TableCell className="font-semibold text-red-600">
                             ₺{debt.amount.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-slate-500">{debt.description}</TableCell>
-                          <TableCell className="text-slate-500">
-                            {debt.dueDate ? format(new Date(debt.dueDate), 'dd MMM yyyy', { locale: tr }) : '-'}
-                          </TableCell>
+                          <TableCell className="text-slate-500 text-sm max-w-32 truncate">{debt.description}</TableCell>
                           <TableCell>
                             {debt.isPaid ? (
-                              <Badge className="bg-emerald-500">Ödendi</Badge>
+                              <Badge className="bg-emerald-500 text-xs">Ödendi</Badge>
                             ) : (
-                              <Badge variant="destructive">Bekliyor</Badge>
+                              <Badge variant="destructive" className="text-xs">Bekliyor</Badge>
                             )}
+                          </TableCell>
+                          <TableCell className="text-slate-500 text-sm">
+                            {format(new Date(debt.createdAt), 'dd MMM yyyy', { locale: tr })}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
@@ -433,11 +457,12 @@ export function PaymentsPanel() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
+                                  className="h-8 w-8 p-0 text-emerald-600"
                                   onClick={() => {
                                     setShowPayDebtDialog(debt)
                                     setPayAmount(debt.amount)
                                   }}
-                                  className="text-emerald-600"
+                                  title="Öde"
                                 >
                                   <DollarSign className="w-4 h-4" />
                                 </Button>
@@ -445,8 +470,9 @@ export function PaymentsPanel() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                className="h-8 w-8 p-0 text-red-600"
                                 onClick={() => handleDeleteDebt(debt.id)}
-                                className="text-red-600"
+                                title="Sil"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
@@ -468,9 +494,7 @@ export function PaymentsPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Ödeme Al</DialogTitle>
-            <DialogDescription>
-              Üyeden ödeme al
-            </DialogDescription>
+            <DialogDescription>Üyeden ödeme al</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -482,7 +506,7 @@ export function PaymentsPanel() {
                 <SelectContent>
                   {members.map((member) => (
                     <SelectItem key={member.id} value={member.id}>
-                      {member.user.name}
+                      {member.user.name} - {member.user.email}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -490,12 +514,12 @@ export function PaymentsPanel() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Tutar</Label>
+                <Label>Tutar (₺)</Label>
                 <Input
                   type="number"
                   value={paymentAmount}
                   onChange={(e) => setPaymentAmount(Number(e.target.value))}
-                  placeholder="₺"
+                  placeholder="0"
                 />
               </div>
               <div className="space-y-2">
@@ -518,6 +542,7 @@ export function PaymentsPanel() {
                 value={paymentDescription}
                 onChange={(e) => setPaymentDescription(e.target.value)}
                 rows={2}
+                placeholder="Ödeme açıklaması (opsiyonel)"
               />
             </div>
           </div>
@@ -538,9 +563,7 @@ export function PaymentsPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Borç Ekle</DialogTitle>
-            <DialogDescription>
-              Üyeye borç ekle
-            </DialogDescription>
+            <DialogDescription>Üyeye borç ekle</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -552,30 +575,20 @@ export function PaymentsPanel() {
                 <SelectContent>
                   {members.map((member) => (
                     <SelectItem key={member.id} value={member.id}>
-                      {member.user.name}
+                      {member.user.name} - {member.user.email}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Tutar</Label>
-                <Input
-                  type="number"
-                  value={debtAmount}
-                  onChange={(e) => setDebtAmount(Number(e.target.value))}
-                  placeholder="₺"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Son Tarih</Label>
-                <Input
-                  type="date"
-                  value={debtDueDate}
-                  onChange={(e) => setDebtDueDate(e.target.value)}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label>Tutar (₺)</Label>
+              <Input
+                type="number"
+                value={debtAmount}
+                onChange={(e) => setDebtAmount(Number(e.target.value))}
+                placeholder="0"
+              />
             </div>
             <div className="space-y-2">
               <Label>Açıklama *</Label>
@@ -583,6 +596,7 @@ export function PaymentsPanel() {
                 value={debtDescription}
                 onChange={(e) => setDebtDescription(e.target.value)}
                 rows={2}
+                placeholder="Borç açıklaması"
               />
             </div>
           </div>
@@ -599,23 +613,26 @@ export function PaymentsPanel() {
       </Dialog>
 
       {/* Pay Debt Dialog */}
-      <Dialog open={!!showPayDebtDialog} onOpenChange={(open) => { if (!open) setShowPayDebtDialog(null); }}>
+      <Dialog open={!!showPayDebtDialog} onOpenChange={(open) => { if (!open) setShowPayDebtDialog(null) }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Borç Öde</DialogTitle>
             <DialogDescription>
-              {showPayDebtDialog?.member?.user?.name} - ₺{showPayDebtDialog?.amount.toLocaleString()}
+              {showPayDebtDialog?.member?.user?.name} - ₺{showPayDebtDialog?.amount.toLocaleString()} borç
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Ödenecek Tutar</Label>
+              <Label>Ödenecek Tutar (₺)</Label>
               <Input
                 type="number"
                 value={payAmount}
                 onChange={(e) => setPayAmount(Number(e.target.value))}
-                placeholder="₺"
+                placeholder="0"
               />
+              <p className="text-xs text-slate-500">
+                Toplam borç: ₺{showPayDebtDialog?.amount.toLocaleString()}
+              </p>
             </div>
           </div>
           <DialogFooter>

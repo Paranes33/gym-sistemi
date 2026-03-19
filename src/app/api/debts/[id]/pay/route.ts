@@ -1,124 +1,85 @@
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { 
-  getCurrentUser, 
-  apiResponse, 
-  apiError, 
-  unauthorizedError,
-  forbiddenError,
-  notFoundError
-} from '@/lib/auth'
-import { PaymentType } from '@prisma/client'
 
-// POST: Pay debt
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser()
-    if (!user) return unauthorizedError()
-    
-    if (user.role === 'MEMBER') {
-      return forbiddenError()
-    }
-    
     const { id } = await params
-    
+    const body = await request.json()
+    const { amount } = body
+
+    if (!amount || amount <= 0) {
+      return NextResponse.json({ error: 'Geçerli bir tutar girin' }, { status: 400 })
+    }
+
     const debt = await db.debt.findUnique({
       where: { id },
-      include: { 
-        member: { include: { user: true, gym: true } }
-      }
+      include: { member: true }
     })
-    
+
     if (!debt) {
-      return notFoundError('Debt not found')
+      return NextResponse.json({ error: 'Borç bulunamadı' }, { status: 404 })
     }
-    
-    // Check permission
-    if (user.role === 'SALON_ADMIN' && debt.member.gymId !== user.gymId) {
-      return forbiddenError()
-    }
-    
-    // Check if already paid
+
     if (debt.isPaid) {
-      return apiError('Debt is already paid')
+      return NextResponse.json({ error: 'Bu borç zaten ödenmiş' }, { status: 400 })
     }
-    
-    const body = await request.json()
-    const { 
-      amount,
-      type = 'CASH',
-      notes
-    } = body
-    
-    if (!amount || amount <= 0) {
-      return apiError('Valid payment amount is required')
-    }
-    
-    const now = new Date()
-    const paymentAmount = Math.min(amount, debt.amount)
-    
-    // Create payment record
-    const payment = await db.payment.create({
-      data: {
-        amount: paymentAmount,
-        type: type as PaymentType,
-        description: `Debt payment - ${debt.description}`,
-        memberId: debt.memberId,
-        gymId: debt.member.gymId,
-        userId: user.id,
-        debtId: debt.id,
-        receiptNo: `RCP-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-        notes
-      },
-      include: {
-        member: { include: { user: true } },
-        gym: true
-      }
+
+    // Sistem kullanıcısı var mı kontrol et
+    let systemUser = await db.user.findFirst({
+      where: { email: 'system@gym.local' }
     })
-    
-    // Mark debt as paid if fully paid
-    if (amount >= debt.amount) {
-      await db.debt.update({
-        where: { id: debt.id },
-        data: { 
-          isPaid: true,
-          paidAt: now
-        }
-      })
-    } else {
-      // Partial payment - reduce debt amount
-      await db.debt.update({
-        where: { id: debt.id },
-        data: { 
-          amount: debt.amount - paymentAmount
+
+    if (!systemUser) {
+      systemUser = await db.user.create({
+        data: {
+          email: 'system@gym.local',
+          password: 'system',
+          name: 'Sistem',
+          role: 'SALON_ADMIN'
         }
       })
     }
-    
-    return apiResponse({
-      success: true,
-      payment: {
-        id: payment.id,
-        amount: payment.amount,
-        type: payment.type,
-        receiptNo: payment.receiptNo,
-        createdAt: payment.createdAt.toISOString()
-      },
-      debt: {
-        id: debt.id,
-        originalAmount: debt.amount,
-        paidAmount: paymentAmount,
-        fullyPaid: amount >= debt.amount
-      },
-      member: {
-        id: debt.member.id,
-        name: debt.member.user.name
-      }
+
+    const result = await db.$transaction(async (tx) => {
+      // Ödeme kaydı oluştur
+      await tx.payment.create({
+        data: {
+          memberId: debt.memberId,
+          gymId: debt.member.gymId,
+          userId: systemUser.id,
+          debtId: id,
+          amount,
+          type: 'CASH',
+          description: `Borç ödemesi - ${debt.description}`
+        }
+      })
+
+      // Borcu güncelle
+      const remainingDebt = debt.amount - amount
+      
+      const updatedDebt = await tx.debt.update({
+        where: { id },
+        data: {
+          amount: remainingDebt > 0 ? remainingDebt : 0,
+          isPaid: remainingDebt <= 0,
+          paidAt: remainingDebt <= 0 ? new Date() : undefined
+        },
+        include: {
+          member: { include: { user: true } }
+        }
+      })
+
+      return updatedDebt
     })
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Pay debt error:', error)
-    return apiError('Internal server error', 500)
+    return NextResponse.json({ 
+      error: 'Server error: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata') 
+    }, { status: 500 })
   }
 }

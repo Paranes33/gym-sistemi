@@ -14,8 +14,14 @@ export async function GET(request: NextRequest) {
     const payments = await db.payment.findMany({
       where,
       include: {
-        member: { include: { user: true } },
-        gym: true,
+        member: {
+          include: { 
+            user: {
+              select: { id: true, name: true, email: true, phone: true }
+            }
+          }
+        },
+        gym: { select: { id: true, name: true } },
         user: { select: { id: true, name: true, email: true } }
       },
       orderBy: { createdAt: 'desc' },
@@ -46,11 +52,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Üye bulunamadı' }, { status: 404 })
     }
 
+    // Sistem kullanıcısı var mı kontrol et, yoksa oluştur
+    let systemUser = await db.user.findFirst({
+      where: { email: 'system@gym.local' }
+    })
+
+    if (!systemUser) {
+      systemUser = await db.user.create({
+        data: {
+          email: 'system@gym.local',
+          password: 'system',
+          name: 'Sistem',
+          role: 'SALON_ADMIN'
+      })
+    }
+
     const payment = await db.payment.create({
       data: {
         memberId,
         gymId: gymId || member.gymId,
-        userId: 'system',
+        userId: systemUser.id,
         amount,
         type: type || 'CASH',
         description,
@@ -68,7 +89,7 @@ export async function POST(request: NextRequest) {
         if (amount >= debt.amount) {
           await db.debt.update({
             where: { id: debtId },
-            data: { isPaid: true, paidAt: new Date() }
+            data: { isPaid: true, paidAt: new Date(), amount: 0 }
           })
         } else {
           await db.debt.update({
