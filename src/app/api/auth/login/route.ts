@@ -2,8 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import bcrypt from 'bcryptjs'
 
-// Simple in-memory session store (in production use Redis or database)
-const sessions = new Map<string, { userId: string; expiresAt: number }>()
+// Simple token encoding/decoding for serverless
+function encodeToken(userId: string): string {
+  const payload = JSON.stringify({ userId, exp: Date.now() + 24 * 60 * 60 * 1000 })
+  return Buffer.from(payload).toString('base64')
+}
+
+function decodeToken(token: string): { userId: string; exp: number } | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token, 'base64').toString())
+    if (payload.exp < Date.now()) return null
+    return payload
+  } catch {
+    return null
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,9 +61,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Hesap devre dışı' }, { status: 401 })
     }
 
-    // Create session token
-    const token = Buffer.from(`${user.id}:${Date.now()}`).toString('base64')
-    sessions.set(token, { userId: user.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 })
+    // Create token
+    const token = encodeToken(user.id)
 
     // Calculate total debt
     const totalDebt = user.member?.debts?.reduce((sum, d) => sum + d.amount, 0) || 0
@@ -84,4 +96,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export { sessions }
+export { decodeToken }

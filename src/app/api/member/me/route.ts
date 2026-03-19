@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { sessions } from '@/app/api/auth/login/route'
+import { decodeToken } from '@/app/api/auth/login/route'
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,13 +12,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const session = sessions.get(token)
-    if (!session || session.expiresAt < Date.now()) {
+    const payload = decodeToken(token)
+    if (!payload || !payload.userId) {
       return NextResponse.json({ error: 'Session expired' }, { status: 401 })
     }
 
     const member = await db.member.findFirst({
-      where: { userId: session.userId },
+      where: { userId: payload.userId },
       include: {
         user: true,
         memberships: {
